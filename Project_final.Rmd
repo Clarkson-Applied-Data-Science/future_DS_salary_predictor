@@ -1,0 +1,120 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+```{r echo=FALSE}
+library(readr)
+library(tidyverse)
+library(ggplot2)
+library(scales)
+library(emmeans)
+library(broom) 
+library(multcompView)
+library(multcomp) 
+library(Metrics)
+library(caret)
+library(dplyr)
+``` 
+
+```{r}
+salary_data_no_category <- read.csv("Data/datascience.csv")
+salary_data_with_category <- read.csv("Data/datascienceold.csv")  
+```
+
+#Left join with salary_data_no_category to impute the job_category
+```{r}
+category_counts <- salary_data_with_category %>%
+  group_by(job_title, job_category) %>%
+  tally() %>%
+  arrange(job_title, desc(n)) %>%
+  group_by(job_title) %>%
+  slice(1) %>%
+  ungroup()
+
+salary_data_not_split <- salary_data_no_category %>%
+  left_join(category_counts %>% dplyr::select(job_title, job_category), by = "job_title") %>%
+  mutate(job_category = ifelse(is.na(job_category), "Unknown", job_category))  
+#view(salary_data)
+```
+
+#Pre-process factoring and scaling
+```{r}  
+salary_data_not_split <- salary_data_not_split %>%
+  mutate(scaled_salary = as.vector(scale(salary_in_usd)))
+
+#removing any job entries outside the US
+salary_data_not_split <- salary_data_not_split %>%
+  filter(company_location == "US")  
+
+salary_data_not_split <- subset(salary_data_not_split, select = - c(company_location,employee_residence ))
+
+salary_data_not_split$work_year <- as.factor(salary_data_not_split$work_year)
+salary_data_not_split$experience_level <- as.factor(salary_data_not_split$experience_level)
+salary_data_not_split$employment_type <- as.factor(salary_data_not_split$employment_type)
+salary_data_not_split$job_title <- as.factor(salary_data_not_split$job_title)
+salary_data_not_split$salary_currency <- as.factor(salary_data_not_split$salary_currency) 
+salary_data_not_split$remote_ratio <- as.factor(salary_data_not_split$remote_ratio) 
+salary_data_not_split$company_size <- as.factor(salary_data_not_split$company_size)
+salary_data_not_split$job_category <- as.factor(salary_data_not_split$job_category) 
+```
+
+```{r} 
+salary_data_cor <- salary_data_not_split
+salary_data_cor$work_year <- as.numeric(salary_data_not_split$work_year)
+salary_data_cor$experience_level <- as.numeric(salary_data_not_split$experience_level)
+salary_data_cor$employment_type <- as.numeric(salary_data_not_split$employment_type)
+salary_data_cor$job_title <- as.numeric(salary_data_not_split$job_title)
+salary_data_cor$salary_currency <- as.numeric(salary_data_not_split$salary_currency)
+salary_data_cor$remote_ratio <- as.numeric(salary_data_not_split$remote_ratio) 
+salary_data_cor$company_size <- as.numeric(salary_data_not_split$company_size)
+salary_data_cor$job_category <- as.numeric(salary_data_not_split$job_category)
+
+# Now, calculate the correlation matrix including the encoded variables
+cor_matrix <- cor(salary_data_cor, use = "complete.obs", method = "pearson")
+print(cor_matrix) 
+```
+#Convert non-numeric columns to factors and run the ANOVA
+```{r} 
+salary_data_not_split$salary <- as.numeric(salary_data_not_split$salary)
+ 
+non_numeric_cols <- sapply(salary_data_not_split, function(x) !is.numeric(x))
+
+# Remove factors with only one level
+salary_data_not_split <- salary_data_not_split[, sapply(salary_data_not_split, function(x) length(unique(x)) > 1)]
+
+salary_data_not_split[non_numeric_cols] <- lapply(salary_data_not_split[non_numeric_cols], as.factor)
+
+factor_names <- names(salary_data_not_split)[non_numeric_cols]
+formula_str <- paste("salary ~", paste(factor_names, collapse = " + "))
+anova_formula <- as.formula(formula_str)
+
+anova_model <- aov(anova_formula, data = salary_data_not_split)
+summary(anova_model)
+```
+all the categorical have <0.05 hence are influencial and experience_level,company_location,job_title have a high effect on the salary.
+
+#Plots the average salary per job title with 95% confidence intervals.
+```{r}
+top_jobs <- names(sort(table(salary_data_not_split$job_title), decreasing = TRUE)[1:10])
+filtered_data <- salary_data_not_split[salary_data_not_split$job_title %in% top_jobs, ]
+
+anova_model <- aov(salary ~ job_title, data = filtered_data)
+emm <- emmeans(anova_model, ~ job_title)
+plot(emm)
+``` 
+there are statistically significant differences in salary between at least some job titles.
+
+#Do the model
+```{r}
+#source("RandomForest/Model.R")
+#source("DecisionTree/Model.R")
+source("./LinearRegression/Model.R")
+```
+
+#Test the model
+```{r}
+test_data$predicted_salary <- predict(model, newdata = test_data)
+head(test_data[, c("job_title", "salary", "predicted_salary")])
+```
+
+
