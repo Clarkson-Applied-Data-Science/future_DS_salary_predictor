@@ -44,15 +44,17 @@ salary_data[cols_to_factor] <- lapply(salary_data[cols_to_factor], as.factor)
 test_data[cols_to_factor] <- lapply(test_data[cols_to_factor], as.factor)
 ```
 
+
 #Encoding
 ```{r} 
-dummy <- dummyVars(~ ., data = salary_data)
+dummy <- dummyVars(~ work_year + experience_level + employment_type + remote_ratio + company_size, data = salary_data)
 # Apply one-hot encoding to the dataset
 salary_data_one_hot <- predict(dummy, newdata = salary_data)
 salary_data_one_hot <- data.frame(salary_data_one_hot)
 salary_data_combined <- cbind(salary_data, salary_data_one_hot)
 salary_data <- salary_data_combined[, !names(salary_data_combined) %in% c("work_year", "experience_level", "employment_type",  "remote_ratio", "company_size")]
 ```
+
 
 #Correlation
 ```{r}
