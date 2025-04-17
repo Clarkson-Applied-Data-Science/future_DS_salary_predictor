@@ -17,6 +17,7 @@ library(FSA)
 library(dplyr)
 library(ModelMetrics)
 library(gbm)
+library(rpart)
 ``` 
 
 ```{r}
@@ -160,8 +161,8 @@ there are statistically significant differences in salary between at least some 
 #Do the model
 ```{r}
 #source("RandomForest/Model.R")
-#source("DecisionTree/Model.R")
-source("./LinearRegression/Model.R")
+source("DecisionTree/Model.R")
+#source("./LinearRegression/Model.R")
 #source("./GradientBoosting/Model.R")
 ```
 
