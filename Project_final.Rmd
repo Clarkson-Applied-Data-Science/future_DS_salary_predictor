@@ -16,11 +16,25 @@ library(caret)
 library(FSA)
 library(dplyr)
 library(ModelMetrics)
+library(gbm)
 ``` 
 
 ```{r}
-salary_df <- read.csv("Data/datascience.csv")
-#salary_data_with_category <- read.csv("Data/datascienceold.csv")  
+salary_data_no_category <- read.csv("Data/datascience.csv")
+salary_data_with_category <- read.csv("Data/datascienceold.csv") 
+category_counts <- salary_data_with_category %>%
+  group_by(job_title, job_category) %>%
+  tally() %>%
+  arrange(job_title, desc(n)) %>%
+  group_by(job_title) %>%
+  slice(1) %>%
+  ungroup()
+
+salary_df <- salary_data_no_category %>%
+  left_join(category_counts %>% dplyr::select(job_title, job_category), by = "job_title") %>%
+  mutate(job_category = ifelse(is.na(job_category), "Unknown", job_category)) 
+
+salary_df$salary_in_usd <- log(salary_df$salary_in_usd)
 ```
 
 #Removing outliers
@@ -56,7 +70,7 @@ test_data <- salary_df[-split_index, ]
 salary_data <- subset(train_data, select = - c(company_location,employee_residence,salary_currency,salary))
 test_data <- subset(test_data, select = - c(company_location,employee_residence,salary_currency,salary))
 
-cols_to_factor <- c("work_year", "experience_level", "employment_type", "job_title",  "remote_ratio", "company_size")
+cols_to_factor <- c("work_year", "experience_level", "employment_type", "job_title", "job_category", "remote_ratio", "company_size")
 salary_data[cols_to_factor] <- lapply(salary_data[cols_to_factor], as.factor)
 test_data[cols_to_factor] <- lapply(test_data[cols_to_factor], as.factor)
 ```
@@ -64,12 +78,12 @@ test_data[cols_to_factor] <- lapply(test_data[cols_to_factor], as.factor)
 
 #Encoding
 ```{r} 
-dummy <- dummyVars(~ work_year + experience_level + remote_ratio + company_size, data = salary_data)
+dummy <- dummyVars(~ work_year + experience_level + remote_ratio + company_size + job_category, data = salary_data)
 # Apply one-hot encoding to the dataset
 salary_data_one_hot <- predict(dummy, newdata = salary_data)
 salary_data_one_hot <- data.frame(salary_data_one_hot)
 salary_data_combined <- cbind(salary_data, salary_data_one_hot)
-salary_data <- salary_data_combined[, !names(salary_data_combined) %in% c("work_year", "experience_level", "employment_type",  "remote_ratio", "company_size")]
+salary_data <- salary_data_combined[, !names(salary_data_combined) %in% c("work_year", "experience_level", "employment_type",  "remote_ratio", "company_size","job_category")]
 ```
 
 
@@ -84,7 +98,7 @@ salary_data_cor <- salary_data %>%
   dplyr::select(-job_title) %>%
   rename(job_title = job_title_encoded)
 cor_matrix <- cor(salary_data_cor, use = "complete.obs", method = "pearson")
-print(cor_matrix) 
+#print(cor_matrix) 
 ```
 
 
@@ -135,18 +149,20 @@ there are statistically significant differences in salary between at least some 
 
 # SMOTE
 ```{r}
-max_per_title <- max(table(salary_data$job_title))
-salary_data <- salary_data %>%
-  group_by(job_title) %>%
-  slice(rep(1:n(), length.out = max_per_title)) %>%
-  ungroup()
+#max_per_title <- max(table(salary_data$job_title))
+#salary_data <- salary_data %>%
+#  group_by(job_title) %>%
+#  slice(rep(1:n(), length.out = max_per_title)) %>%
+#  ungroup()
 ```
+
 
 #Do the model
 ```{r}
 #source("RandomForest/Model.R")
 #source("DecisionTree/Model.R")
 source("./LinearRegression/Model.R")
+#source("./GradientBoosting/Model.R")
 ```
 
 #Apply encoding on test and scaling
@@ -155,7 +171,7 @@ source("./LinearRegression/Model.R")
 test_salary_data_one_hot <- predict(dummy, newdata = test_data)
 test_salary_data_one_hot <- data.frame(test_salary_data_one_hot)
 test_salary_data_combined <- cbind(test_data, test_salary_data_one_hot)
-test_data <- test_salary_data_combined[, !names(test_salary_data_combined) %in% c("work_year", "experience_level", "employment_type",  "remote_ratio", "company_size")]
+test_data <- test_salary_data_combined[, !names(test_salary_data_combined) %in% c("work_year", "experience_level", "employment_type",  "remote_ratio", "company_size","job_category")]
 
 test_data <- test_data %>%
   mutate(salary_in_usd = (salary_in_usd - min_salary) / (max_salary - min_salary))
