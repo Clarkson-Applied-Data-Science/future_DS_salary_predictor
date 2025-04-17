@@ -13,16 +13,15 @@ library(multcompView)
 library(multcomp) 
 library(Metrics)
 library(caret)
+library(FSA)
 library(dplyr)
+library(ModelMetrics)
+library(gbm)
 ``` 
 
 ```{r}
 salary_data_no_category <- read.csv("Data/datascience.csv")
-salary_data_with_category <- read.csv("Data/datascienceold.csv")  
-```
-
-#Left join with salary_data_no_category to impute the job_category
-```{r}
+salary_data_with_category <- read.csv("Data/datascienceold.csv") 
 category_counts <- salary_data_with_category %>%
   group_by(job_title, job_category) %>%
   tally() %>%
@@ -31,90 +30,180 @@ category_counts <- salary_data_with_category %>%
   slice(1) %>%
   ungroup()
 
-salary_data_not_split <- salary_data_no_category %>%
+salary_df <- salary_data_no_category %>%
   left_join(category_counts %>% dplyr::select(job_title, job_category), by = "job_title") %>%
-  mutate(job_category = ifelse(is.na(job_category), "Unknown", job_category))  
+  mutate(job_category = ifelse(is.na(job_category), "Unknown", job_category)) 
+
+salary_df$salary_in_usd <- log(salary_df$salary_in_usd)
+```
+
+#Removing outliers
+```{r}
+Q1 <- quantile(salary_df$salary_in_usd, 0.25)
+Q3 <- quantile(salary_df$salary_in_usd, 0.75)
+IQR <- Q3 - Q1
+
+lower_bound <- Q1 - 1.5 * IQR
+upper_bound <- Q3 + 1.5 * IQR
+
+
+salary_df <- salary_df %>%
+  filter(salary_in_usd >= lower_bound & salary_in_usd <= upper_bound)
+```
+
+
+#Left join with salary_data_no_category to impute the job_category
+```{r}
+salary_df <- salary_df %>%
+  filter(company_location == "US",
+           employment_type == "FT") 
+
+split_index <- createDataPartition(salary_df$job_title, p = 0.7, list = FALSE)
+
+train_data <- salary_df[split_index, ]
+test_data <- salary_df[-split_index, ]
+```
+
+
+#Pre-process factoring 
+```{r}  
+salary_data <- subset(train_data, select = - c(company_location,employee_residence,salary_currency,salary))
+test_data <- subset(test_data, select = - c(company_location,employee_residence,salary_currency,salary))
+
+cols_to_factor <- c("work_year", "experience_level", "employment_type", "job_title", "job_category", "remote_ratio", "company_size")
+salary_data[cols_to_factor] <- lapply(salary_data[cols_to_factor], as.factor)
+test_data[cols_to_factor] <- lapply(test_data[cols_to_factor], as.factor)
+```
+
+
+#Encoding
+```{r} 
+dummy <- dummyVars(~ work_year + experience_level + remote_ratio + company_size + job_category, data = salary_data)
+# Apply one-hot encoding to the dataset
+salary_data_one_hot <- predict(dummy, newdata = salary_data)
+salary_data_one_hot <- data.frame(salary_data_one_hot)
+salary_data_combined <- cbind(salary_data, salary_data_one_hot)
+salary_data <- salary_data_combined[, !names(salary_data_combined) %in% c("work_year", "experience_level", "employment_type",  "remote_ratio", "company_size","job_category")]
+```
+
+
+#Correlation
+```{r}
+means <- salary_data %>%
+  group_by(job_title) %>%
+  summarise(job_title_encoded = mean(salary_in_usd), .groups = "drop")
+
+salary_data_cor <- salary_data %>%
+  left_join(means, by = "job_title") %>%
+  dplyr::select(-job_title) %>%
+  rename(job_title = job_title_encoded)
+cor_matrix <- cor(salary_data_cor, use = "complete.obs", method = "pearson")
+#print(cor_matrix) 
+```
+
+
+#Scaling
+```{r}
+min_salary <- min(train_data$salary_in_usd)
+max_salary <- max(train_data$salary_in_usd)
+
+salary_data <- salary_data %>%
+  mutate(salary_in_usd = (salary_in_usd - min_salary) / (max_salary - min_salary))
 #view(salary_data)
 ```
 
-#Pre-process factoring and scaling
-```{r}  
-salary_data_not_split <- salary_data_not_split %>%
-  mutate(scaled_salary = as.vector(scale(salary_in_usd)))
-
-#removing any job entries outside the US
-salary_data_not_split <- salary_data_not_split %>%
-  filter(company_location == "US")  
-
-salary_data_not_split <- subset(salary_data_not_split, select = - c(company_location,employee_residence ))
-
-salary_data_not_split$work_year <- as.factor(salary_data_not_split$work_year)
-salary_data_not_split$experience_level <- as.factor(salary_data_not_split$experience_level)
-salary_data_not_split$employment_type <- as.factor(salary_data_not_split$employment_type)
-salary_data_not_split$job_title <- as.factor(salary_data_not_split$job_title)
-salary_data_not_split$salary_currency <- as.factor(salary_data_not_split$salary_currency) 
-salary_data_not_split$remote_ratio <- as.factor(salary_data_not_split$remote_ratio) 
-salary_data_not_split$company_size <- as.factor(salary_data_not_split$company_size)
-salary_data_not_split$job_category <- as.factor(salary_data_not_split$job_category) 
-```
-
+#kruskal.test
 ```{r} 
-salary_data_cor <- salary_data_not_split
-salary_data_cor$work_year <- as.numeric(salary_data_not_split$work_year)
-salary_data_cor$experience_level <- as.numeric(salary_data_not_split$experience_level)
-salary_data_cor$employment_type <- as.numeric(salary_data_not_split$employment_type)
-salary_data_cor$job_title <- as.numeric(salary_data_not_split$job_title)
-salary_data_cor$salary_currency <- as.numeric(salary_data_not_split$salary_currency)
-salary_data_cor$remote_ratio <- as.numeric(salary_data_not_split$remote_ratio) 
-salary_data_cor$company_size <- as.numeric(salary_data_not_split$company_size)
-salary_data_cor$job_category <- as.numeric(salary_data_not_split$job_category)
-
-# Now, calculate the correlation matrix including the encoded variables
-cor_matrix <- cor(salary_data_cor, use = "complete.obs", method = "pearson")
-print(cor_matrix) 
-```
-#Convert non-numeric columns to factors and run the ANOVA
-```{r} 
-salary_data_not_split$salary <- as.numeric(salary_data_not_split$salary)
+salary_data <- salary_data[, sapply(salary_data, function(x) length(unique(x)) > 1)]
  
-non_numeric_cols <- sapply(salary_data_not_split, function(x) !is.numeric(x))
+factor_names <- names(salary_data)[-which(names(salary_data) == "salary_in_usd")]
+ 
+results_list <- lapply(factor_names, function(factor_var) {
+  test <- kruskal.test(as.formula(paste("salary_in_usd ~", factor_var)), data = salary_data)
+  data.frame(
+    Factor = factor_var,
+    Statistic = round(test$statistic, 3),
+    P_Value = round(test$p.value, 4),
+    stringsAsFactors = FALSE
+  )
+})
+ 
+results_table <- do.call(rbind, results_list) 
 
-# Remove factors with only one level
-salary_data_not_split <- salary_data_not_split[, sapply(salary_data_not_split, function(x) length(unique(x)) > 1)]
-
-salary_data_not_split[non_numeric_cols] <- lapply(salary_data_not_split[non_numeric_cols], as.factor)
-
-factor_names <- names(salary_data_not_split)[non_numeric_cols]
-formula_str <- paste("salary ~", paste(factor_names, collapse = " + "))
-anova_formula <- as.formula(formula_str)
-
-anova_model <- aov(anova_formula, data = salary_data_not_split)
-summary(anova_model)
+print(results_table %>%  arrange(desc(Statistic)))
 ```
-all the categorical have <0.05 hence are influencial and experience_level,company_location,job_title have a high effect on the salary.
+Most of our factors have very low p-values (p < 0.001), which means they have statistically significant effects on salary. Especially job_title and experience Levels they have huge test statistics, meaning there's a strong difference in salary across their groups.
 
-#Plots the average salary per job title with 95% confidence intervals.
+#Comparision between job roles and the salary
 ```{r}
-top_jobs <- names(sort(table(salary_data_not_split$job_title), decreasing = TRUE)[1:10])
-filtered_data <- salary_data_not_split[salary_data_not_split$job_title %in% top_jobs, ]
+salary_data$salary_in_usd <- as.numeric(salary_data$salary_in_usd)
+salary_data$job_title <- as.factor(salary_data$job_title)
 
-anova_model <- aov(salary ~ job_title, data = filtered_data)
-emm <- emmeans(anova_model, ~ job_title)
-plot(emm)
-``` 
+top_jobs <- names(sort(table(salary_data$job_title), decreasing = TRUE)[1:10])
+filtered_data <- salary_data[salary_data$job_title %in% top_jobs, ]
+dunn_result <- dunnTest(salary_in_usd ~ job_title, data = filtered_data, method = "bonferroni")
+print(dunn_result) 
+```
+
 there are statistically significant differences in salary between at least some job titles.
+
+# SMOTE
+```{r}
+#max_per_title <- max(table(salary_data$job_title))
+#salary_data <- salary_data %>%
+#  group_by(job_title) %>%
+#  slice(rep(1:n(), length.out = max_per_title)) %>%
+#  ungroup()
+```
+
 
 #Do the model
 ```{r}
 #source("RandomForest/Model.R")
 #source("DecisionTree/Model.R")
 source("./LinearRegression/Model.R")
+#source("./GradientBoosting/Model.R")
 ```
+
+#Apply encoding on test and scaling
+```{r}
+# Apply one-hot encoding to the dataset
+test_salary_data_one_hot <- predict(dummy, newdata = test_data)
+test_salary_data_one_hot <- data.frame(test_salary_data_one_hot)
+test_salary_data_combined <- cbind(test_data, test_salary_data_one_hot)
+test_data <- test_salary_data_combined[, !names(test_salary_data_combined) %in% c("work_year", "experience_level", "employment_type",  "remote_ratio", "company_size","job_category")]
+
+test_data <- test_data %>%
+  mutate(salary_in_usd = (salary_in_usd - min_salary) / (max_salary - min_salary))
+
+```
+
 
 #Test the model
 ```{r}
 test_data$predicted_salary <- predict(model, newdata = test_data)
-head(test_data[, c("job_title", "salary", "predicted_salary")])
+
+test_data$salary_in_usd <- (test_data$salary_in_usd * (max_salary - min_salary)) + min_salary
+test_data$predicted_salary_original <- (test_data$predicted_salary * (max_salary - min_salary)) + min_salary
+head(test_data[, c("job_title", "salary_in_usd", "predicted_salary_original")])
+```
+
+```{r}
+# Calculate RMSE and MAE
+rmse_value <- rmse(test_data$salary_in_usd, test_data$predicted_salary_original)
+mae_value <- mae(test_data$salary_in_usd, test_data$predicted_salary_original)
+#r_squared <- rsq(test_data$salary_in_usd, test_data$predicted_salary_original)
+
+rss <- sum((test_data$salary_in_usd - test_data$predicted_salary_original)^2)  # Residual Sum of Squares
+tss <- sum((test_data$salary_in_usd - mean(test_data$salary_in_usd))^2)        # Total Sum of Squares
+
+r_squared <- 1 - rss/tss
+print(r_squared)
+
+# Print RMSE and MAE
+print(paste("RMSE:", rmse_value))
+print(paste("MAE:", mae_value))
+#print(paste("R2:", r_squared))
 ```
 
 
