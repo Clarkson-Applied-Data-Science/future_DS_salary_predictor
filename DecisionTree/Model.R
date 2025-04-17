@@ -1,6 +1,6 @@
 set.seed(123)
 
-salary_filtered <- salary_data_no_category %>%
+salary_filtered <- salary_df %>%
   filter(
     work_year < 2025,
     employee_residence == "US",
