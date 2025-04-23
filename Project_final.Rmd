@@ -38,7 +38,7 @@ salary_df <- salary_data_no_category %>%
   left_join(category_counts %>% dplyr::select(job_title, job_category), by = "job_title") %>%
   mutate(job_category = ifelse(is.na(job_category), "Unknown", job_category)) 
 
-salary_df$salary_in_usd <- log(salary_df$salary_in_usd)
+#salary_df$salary_in_usd <- log(salary_df$salary_in_usd)
 salary_df <- salary_df %>%
   group_by(job_title) %>%
   filter(n() > 3) %>%
@@ -57,10 +57,21 @@ upper_bound <- Q3 + 1.5 * IQR
 
 salary_df <- salary_df %>%
   filter(salary_in_usd >= lower_bound & salary_in_usd <= upper_bound)
+
+salary_df <- salary_df %>%
+  mutate(
+    salary_category = case_when(
+      salary_in_usd < 110000 ~ "Entry (0-2 years)",
+      salary_in_usd >= 110000 & salary_in_usd < 140000 ~ "Mid level (2-5 years)",
+      salary_in_usd >= 140000 & salary_in_usd < 180000 ~ "Senior (5-8 years)",
+      salary_in_usd >= 180000 & salary_in_usd < 220000 ~ "Staff/Principal (8-10 years)",
+      salary_in_usd >= 220000 ~ "Manager (10+ years)",
+      TRUE ~ "Uncategorized"
+    )
+  )
 ```
 
-
-#Left join with salary_data_no_category to impute the job_category
+# Remove entries that are outside us
 ```{r}
 salary_df <- salary_df %>%
   filter(company_location == "US") 
@@ -79,11 +90,11 @@ salary_df %>%
   shapiro_test(salary_in_usd)
 ```
 ```{r}
-salary_data$salary_in_usd <- as.numeric(salary_data$salary_in_usd)
-salary_data$job_title <- as.factor(salary_data$job_title)
+salary_df$salary_in_usd <- as.numeric(salary_df$salary_in_usd)
+salary_df$job_title <- as.factor(salary_df$job_title)
 
-top_jobs <- names(sort(table(salary_data$job_title), decreasing = TRUE)[1:10])
-filtered_data <- salary_data[salary_data$job_title %in% top_jobs, ]
+top_jobs <- names(sort(table(salary_df$job_title), decreasing = TRUE)[1:10])
+filtered_data <- salary_df[salary_df$job_title %in% top_jobs, ]
 dunn_result <- dunnTest(salary_in_usd ~ job_title, data = filtered_data, method = "bonferroni")
 print(dunn_result) 
 ```
