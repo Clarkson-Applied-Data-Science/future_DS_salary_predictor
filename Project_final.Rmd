@@ -63,8 +63,7 @@ salary_df <- salary_df %>%
 #Left join with salary_data_no_category to impute the job_category
 ```{r}
 salary_df <- salary_df %>%
-  filter(company_location == "US",
-           employment_type == "FT") 
+  filter(company_location == "US") 
 ```
 
 #Checking if the salary is normally distributed to decide to use ANOVA or non parametric
@@ -101,6 +100,7 @@ for (i in 1:(length(cat_cols)-1)) {
   }
 }
 ```
+
 
 # Spliting for training
 ```{r}
@@ -150,14 +150,24 @@ ungroup()
 ```
 #Do the model
 ```{r}
-#source("RandomForest/Model.R")
-source("DecisionTree/Model.R")
-#source("./LinearRegression/Model.R")
-#source("./GradientBoosting/Model.R")
+source("./LinearRegression/Model.R")
 ```
-# Chi-Square Test of Independence
 
 ```{r} 
+categorical_cols=colnames(salary_df)
+categorical_cols
+```
+
+# Kruskal-Wallis Test
+```{r} 
+#categorical_cols=colnames(salary_df)
+categorical_cols=c("work_year","experience_level","employment_type","job_title", "employee_residence","remote_ratio","company_size","job_category")
+for (col in categorical_cols) {
+  formula <- as.formula(paste("salary_in_usd ~", col))
+  kw_result <- kruskal.test(formula, data = salary_df)
+  cat(col, ": Kruskal-Wallis p-value =", kw_result$p.value, "\n")
+}
+
 ```
 
 #Do the rest models Here do your test on your own files and share the confusion matrix or we can utlize a central function and call on the files 
