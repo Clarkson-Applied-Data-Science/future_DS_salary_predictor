@@ -17,7 +17,10 @@ library(FSA)
 library(dplyr)
 library(ModelMetrics)
 library(gbm)
+library(DescTools)
+library(rstatix)
 library(rpart)
+
 ``` 
 
 ```{r}
@@ -36,6 +39,10 @@ salary_df <- salary_data_no_category %>%
   mutate(job_category = ifelse(is.na(job_category), "Unknown", job_category)) 
 
 salary_df$salary_in_usd <- log(salary_df$salary_in_usd)
+salary_df <- salary_df %>%
+  group_by(job_title) %>%
+  filter(n() > 3) %>%
+  ungroup()
 ```
 
 #Removing outliers
@@ -58,13 +65,50 @@ salary_df <- salary_df %>%
 salary_df <- salary_df %>%
   filter(company_location == "US",
            employment_type == "FT") 
+```
 
+#Checking if the salary is normally distributed to decide to use ANOVA or non parametric
+```{r}
+set.seed(123) 
+sample_salary <- sample(salary_df$salary_in_usd, 5000)
+
+shapiro.test(sample_salary)
+
+salary_df %>%
+  group_by(job_title) %>%
+   filter(n() >= 3) %>% 
+  shapiro_test(salary_in_usd)
+```
+```{r}
+salary_data$salary_in_usd <- as.numeric(salary_data$salary_in_usd)
+salary_data$job_title <- as.factor(salary_data$job_title)
+
+top_jobs <- names(sort(table(salary_data$job_title), decreasing = TRUE)[1:10])
+filtered_data <- salary_data[salary_data$job_title %in% top_jobs, ]
+dunn_result <- dunnTest(salary_in_usd ~ job_title, data = filtered_data, method = "bonferroni")
+print(dunn_result) 
+```
+#ADD THE DATA VISUALIZATION CODE HERE
+
+# Cramer’s V because we have categorical
+```{r}
+cat_cols <- c("work_year", "experience_level",  "job_title", "employee_residence","remote_ratio", "company_size")
+
+for (i in 1:(length(cat_cols)-1)) {
+  for (j in (i+1):length(cat_cols)) {
+    v <- CramerV(table(salary_df[[cat_cols[i]]], salary_df[[cat_cols[j]]]))
+    cat(paste(cat_cols[i], "vs", cat_cols[j], "→ Cramér's V:", round(v, 3), "\n"))
+  }
+}
+```
+
+# Spliting for training
+```{r}
 split_index <- createDataPartition(salary_df$job_title, p = 0.7, list = FALSE)
 
 train_data <- salary_df[split_index, ]
 test_data <- salary_df[-split_index, ]
 ```
-
 
 #Pre-process factoring 
 ```{r}  
@@ -76,7 +120,6 @@ salary_data[cols_to_factor] <- lapply(salary_data[cols_to_factor], as.factor)
 test_data[cols_to_factor] <- lapply(test_data[cols_to_factor], as.factor)
 ```
 
-
 #Encoding
 ```{r} 
 dummy <- dummyVars(~ work_year + experience_level + remote_ratio + company_size + job_category, data = salary_data)
@@ -86,22 +129,6 @@ salary_data_one_hot <- data.frame(salary_data_one_hot)
 salary_data_combined <- cbind(salary_data, salary_data_one_hot)
 salary_data <- salary_data_combined[, !names(salary_data_combined) %in% c("work_year", "experience_level", "employment_type",  "remote_ratio", "company_size","job_category")]
 ```
-
-
-#Correlation
-```{r}
-means <- salary_data %>%
-  group_by(job_title) %>%
-  summarise(job_title_encoded = mean(salary_in_usd), .groups = "drop")
-
-salary_data_cor <- salary_data %>%
-  left_join(means, by = "job_title") %>%
-  dplyr::select(-job_title) %>%
-  rename(job_title = job_title_encoded)
-cor_matrix <- cor(salary_data_cor, use = "complete.obs", method = "pearson")
-#print(cor_matrix) 
-```
-
 
 #Scaling
 ```{r}
@@ -113,51 +140,14 @@ salary_data <- salary_data %>%
 #view(salary_data)
 ```
 
-#kruskal.test
-```{r} 
-salary_data <- salary_data[, sapply(salary_data, function(x) length(unique(x)) > 1)]
- 
-factor_names <- names(salary_data)[-which(names(salary_data) == "salary_in_usd")]
- 
-results_list <- lapply(factor_names, function(factor_var) {
-  test <- kruskal.test(as.formula(paste("salary_in_usd ~", factor_var)), data = salary_data)
-  data.frame(
-    Factor = factor_var,
-    Statistic = round(test$statistic, 3),
-    P_Value = round(test$p.value, 4),
-    stringsAsFactors = FALSE
-  )
-})
- 
-results_table <- do.call(rbind, results_list) 
-
-print(results_table %>%  arrange(desc(Statistic)))
-```
-Most of our factors have very low p-values (p < 0.001), which means they have statistically significant effects on salary. Especially job_title and experience Levels they have huge test statistics, meaning there's a strong difference in salary across their groups.
-
-#Comparision between job roles and the salary
-```{r}
-salary_data$salary_in_usd <- as.numeric(salary_data$salary_in_usd)
-salary_data$job_title <- as.factor(salary_data$job_title)
-
-top_jobs <- names(sort(table(salary_data$job_title), decreasing = TRUE)[1:10])
-filtered_data <- salary_data[salary_data$job_title %in% top_jobs, ]
-dunn_result <- dunnTest(salary_in_usd ~ job_title, data = filtered_data, method = "bonferroni")
-print(dunn_result) 
-```
-
-there are statistically significant differences in salary between at least some job titles.
-
 # SMOTE
 ```{r}
-#max_per_title <- max(table(salary_data$job_title))
-#salary_data <- salary_data %>%
-#  group_by(job_title) %>%
-#  slice(rep(1:n(), length.out = max_per_title)) %>%
-#  ungroup()
+max_per_title <- max(table(salary_data$job_title))
+salary_data <- salary_data %>%
+group_by(job_title) %>%
+slice(rep(1:n(), length.out = max_per_title)) %>%
+ungroup()
 ```
-
-
 #Do the model
 ```{r}
 #source("RandomForest/Model.R")
@@ -165,46 +155,39 @@ source("DecisionTree/Model.R")
 #source("./LinearRegression/Model.R")
 #source("./GradientBoosting/Model.R")
 ```
+# Chi-Square Test of Independence
 
-#Apply encoding on test and scaling
+```{r} 
+```
+
+#Do the rest models Here do your test on your own files and share the confusion matrix or we can utlize a central function and call on the files 
 ```{r}
-# Apply one-hot encoding to the dataset
-test_salary_data_one_hot <- predict(dummy, newdata = test_data)
-test_salary_data_one_hot <- data.frame(test_salary_data_one_hot)
-test_salary_data_combined <- cbind(test_data, test_salary_data_one_hot)
-test_data <- test_salary_data_combined[, !names(test_salary_data_combined) %in% c("work_year", "experience_level", "employment_type",  "remote_ratio", "company_size","job_category")]
-
-test_data <- test_data %>%
-  mutate(salary_in_usd = (salary_in_usd - min_salary) / (max_salary - min_salary))
+#source("RandomForest/Model.R")
+#source("DecisionTree/Model.R")
+#source("./Multinomial/Model.R")
 
 ```
 
-
-#Test the model
+#SMOTE BUT NOT USED THIS IS FOR FUTURE USE
 ```{r}
-test_data$predicted_salary <- predict(model, newdata = test_data)
+'''# Identify categorical columns (assuming they are factor or character type)
+categorical_vars <- c("work_year", "experience_level", "employment_type", "job_title","salary_currency",
+                      "employee_residence","remote_ratio", "company_size","company_location","job_category")
 
-test_data$salary_in_usd <- (test_data$salary_in_usd * (max_salary - min_salary)) + min_salary
-test_data$predicted_salary_original <- (test_data$predicted_salary * (max_salary - min_salary)) + min_salary
-head(test_data[, c("job_title", "salary_in_usd", "predicted_salary_original")])
+categorical_data <- salary_df[, categorical_vars]
+
+# Determine the maximum count of categories in each categorical feature
+max_counts <- sapply(categorical_data, function(col) max(table(col)))
+
+# Apply oversampling to each categorical variable
+salary_data_balanced <- salary_df
+
+# Loop through each categorical variable and apply oversampling
+for (var in names(categorical_data)) {
+  max_per_category <- max(table(salary_df[[var]]))
+  salary_data_balanced <- salary_data_balanced %>%
+    group_by_at(var) %>%
+    slice(rep(1:n(), length.out = max_per_category)) %>%
+    ungroup()
+}'''
 ```
-
-```{r}
-# Calculate RMSE and MAE
-rmse_value <- rmse(test_data$salary_in_usd, test_data$predicted_salary_original)
-mae_value <- mae(test_data$salary_in_usd, test_data$predicted_salary_original)
-#r_squared <- rsq(test_data$salary_in_usd, test_data$predicted_salary_original)
-
-rss <- sum((test_data$salary_in_usd - test_data$predicted_salary_original)^2)  # Residual Sum of Squares
-tss <- sum((test_data$salary_in_usd - mean(test_data$salary_in_usd))^2)        # Total Sum of Squares
-
-r_squared <- 1 - rss/tss
-print(r_squared)
-
-# Print RMSE and MAE
-print(paste("RMSE:", rmse_value))
-print(paste("MAE:", mae_value))
-#print(paste("R2:", r_squared))
-```
-
-
