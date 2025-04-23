@@ -19,6 +19,7 @@ library(ModelMetrics)
 library(gbm)
 library(DescTools)
 library(rstatix)
+library(rpart)
 
 ``` 
 
@@ -150,8 +151,8 @@ ungroup()
 #Do the model
 ```{r}
 #source("RandomForest/Model.R")
-#source("DecisionTree/Model.R")
-source("./LinearRegression/Model.R")
+source("DecisionTree/Model.R")
+#source("./LinearRegression/Model.R")
 #source("./GradientBoosting/Model.R")
 ```
 # Chi-Square Test of Independence
