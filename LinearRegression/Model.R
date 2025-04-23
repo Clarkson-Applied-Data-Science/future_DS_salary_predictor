@@ -2,10 +2,10 @@ set.seed(123)
 
 # Remove the 'job_title' column from predictors, as it's already encoded
 salary_data_encoded <- salary_data %>% dplyr::select(-job_title,)  
-
 model <- lm(salary_in_usd ~ ., data = salary_data_encoded)
-summary(model)
-summary(model$residuals)
+summary(model) 
+model$residuals
+model$coefficients
 
 # Predict the salaries using the trained model
 salary_data$predicted_salary <- predict(model, newdata = salary_data_encoded)
@@ -23,9 +23,6 @@ test_data <- test_salary_data_combined[, !names(test_salary_data_combined) %in% 
 test_data <- test_data %>%
   mutate(salary_in_usd = (salary_in_usd - min_salary) / (max_salary - min_salary))
 
-
-
-
 #Test the model
 
 test_data$predicted_salary <- predict(model, newdata = test_data)
@@ -33,8 +30,6 @@ test_data$predicted_salary <- predict(model, newdata = test_data)
 test_data$salary_in_usd <- (test_data$salary_in_usd * (max_salary - min_salary)) + min_salary
 test_data$predicted_salary_original <- (test_data$predicted_salary * (max_salary - min_salary)) + min_salary
 head(test_data[, c("job_title", "salary_in_usd", "predicted_salary_original")])
-
-
 
 # Calculate RMSE and MAE
 rmse_value <- rmse(test_data$salary_in_usd, test_data$predicted_salary_original)
